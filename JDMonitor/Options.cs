@@ -33,18 +33,6 @@ public class Options
 
     [JsonIgnore] public int PeriodMilliseconds => Period * 1000;
     public int MaxLogLine { get; set; } = 1024;
-    public bool Headless { get; set; } = true;
-    public int MaxDegreeOfParallelism { get; set; } = Environment.ProcessorCount;
-
-    /// <summary>
-    /// 页面加载超时时间，默认=60s
-    /// </summary>
-    public int? PageLoadTimeout { get; set; } = 60 * 1000;
-
-    /// <summary>
-    /// 是否使用UseCssSelector定位Html节点，如果为false则表示使用XPath
-    /// </summary>
-    public bool UseCssSelector { get; set; } = true;
 
     public IDbConnection GetDbConnection()
     {

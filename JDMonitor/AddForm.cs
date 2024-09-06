@@ -207,7 +207,7 @@ public class AddForm:XtraForm
             // medCoupon
             // 
             this.medCoupon.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.medCoupon.EditValue = "a.J-open-tb span.text";
+            this.medCoupon.EditValue = "a.J-open-tb";
             this.medCoupon.Location = new System.Drawing.Point(57, 259);
             this.medCoupon.Name = "medCoupon";
             this.medCoupon.Size = new System.Drawing.Size(381, 78);

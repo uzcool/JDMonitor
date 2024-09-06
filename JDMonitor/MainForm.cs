@@ -73,21 +73,10 @@ public partial class MainForm : XtraForm
                 return;
             }
 
-            if (_options.MaxDegreeOfParallelism > 1)
 
+            foreach (var record in records)
             {
-                Parallel.ForEach(records, new ParallelOptions()
-                {
-                    MaxDegreeOfParallelism = _options.MaxDegreeOfParallelism
-                }, async record => await Handle(record));
-            }
-
-            else
-            {
-                foreach (var record in records)
-                {
-                    Handle(record).GetAwaiter().GetResult();
-                }
+                Handle(record).GetAwaiter().GetResult();
             }
         }
         finally
@@ -110,7 +99,7 @@ public partial class MainForm : XtraForm
             UpdateLog($"开始同步 {record}");
             var sw = Stopwatch.StartNew();
             using var tdb = _options.GetDbConnection();
-            var content = await DownloadHtml(record.Url);
+            var content = await DownloadHtmlAsync(record.Url);
             if (string.IsNullOrEmpty(content))
             {
                 sw.Stop();
@@ -123,14 +112,12 @@ public partial class MainForm : XtraForm
             else
             {
                 UpdateLog($"{record.Title} 页面读取完成");
-                var doc = new HtmlDocument();
-                //doc.OptionFixNestedTags = true;
-                doc.LoadHtml(content);
-                HtmlNode priceNode = null;
+
+                string priceNode = null;
                 foreach (var priceXPath in record.PriceXPathArray())
                 {
                     if (string.IsNullOrEmpty(priceXPath)) continue;
-                    priceNode = QueryNode(doc, priceXPath, _options.UseCssSelector);
+                    priceNode = await InvokeJavaScriptAsync($"document.querySelector('{priceXPath}')?.innerText");
                     if (priceNode != null) break;
                 }
 
@@ -149,13 +136,13 @@ public partial class MainForm : XtraForm
                     return;
                 }
 
-                if (!float.TryParse(priceNode.InnerText, out var parsedPrice))
+                if (!float.TryParse(priceNode, out var parsedPrice))
                 {
                     sw.Stop();
                     tdb.Insert<Log>(new Log()
                     {
                         Message = $"{record} 解析价格失败，耗时={sw.Elapsed}",
-                        Tag = priceNode.InnerText
+                        Tag = priceNode
                     });
                     record.Remark = "解析价格失败";
                     RefreshGridData();
@@ -172,17 +159,20 @@ public partial class MainForm : XtraForm
 
                 if (!string.IsNullOrEmpty(record.CouponXPath)) //采集优惠券信息
                 {
-                    var couponNode = QueryNode(doc, record.CouponXPath, _options.UseCssSelector);
+                    var couponNode =
+                        await InvokeJavaScriptAsync($"document.querySelector('{record.CouponXPath}')?.innerText");
                     if (couponNode != null)
-                        price.Coupon = couponNode.InnerText?.Trim().Replace(Environment.NewLine, "/");
+                    {
+                        price.Coupon = couponNode?.Trim().Replace(Environment.NewLine, "/");
+                    }
                 }
 
                 if (!string.IsNullOrEmpty(record.ImageXPath)) //采集预览图
                 {
-                    var imgNode = QueryNode(doc, record.ImageXPath, _options.UseCssSelector);
+                    var imgNode = await InvokeJavaScriptAsync($"document.querySelector('{record.ImageXPath}')?.src");
                     if (imgNode != null)
                     {
-                        var src = imgNode.GetAttributeValue("src", "");
+                        var src = imgNode;
                         if (!string.IsNullOrEmpty(src))
                         {
                             if (src.StartsWith("//")) //如果未明确指明地址协议，则使用商品页相同的协议
@@ -192,7 +182,6 @@ public partial class MainForm : XtraForm
                             }
 
                             record.ImageUrl = src;
-                            //record.Image.ToString();
                         }
                     }
                 }
@@ -304,11 +293,11 @@ public partial class MainForm : XtraForm
         });
     }
 
-    private async Task<string> DownloadHtml(string url)
+    private async Task<string> DownloadHtmlAsync(string url)
     {
         if (InvokeRequired)
         {
-            var r = (Task<string>)Invoke(() => DownloadHtml(url));
+            var r = (Task<string>)Invoke(() => DownloadHtmlAsync(url));
             return await r;
         }
         else
@@ -320,9 +309,12 @@ public partial class MainForm : XtraForm
                 UpdateLog($"开始下载 {url}");
                 var index = Enumerable.Range(0, _userAgents.Count - 1).Shuffle().Shuffle().First();
                 _browser.CoreWebView2.Settings.UserAgent = _userAgents[index];
+                var mre = new ManualResetEvent(false);
+                _browser.CoreWebView2.DOMContentLoaded += (s, e) => { mre.Set(); };
+                _browser.CoreWebView2.NavigationCompleted += (s, e) => { mre.Set(); };
                 _browser.CoreWebView2.Navigate(url);
 
-                await Task.Delay(TimeSpan.FromSeconds(5));
+                var signal = mre.WaitOne(TimeSpan.FromSeconds(3));
 
                 //UpdateLog($"下载完成 {url}");
                 var html = await _browser.CoreWebView2.ExecuteScriptAsync("document.body.outerHTML");
@@ -334,6 +326,23 @@ public partial class MainForm : XtraForm
                 UpdateLog($"{url} 内容下载异常，详情={ex.Message}");
                 return String.Empty;
             }
+        }
+    }
+
+    private async Task<string> InvokeJavaScriptAsync(string script)
+    {
+        if (InvokeRequired)
+        {
+            var r = (Task<string>)Invoke(() => InvokeJavaScriptAsync(script));
+            return await r;
+        }
+        else
+        {
+            if (_browser == null || _browser.CoreWebView2 == null) return string.Empty;
+
+            var html = await _browser.CoreWebView2.ExecuteScriptAsync(script);
+            var decoded = JsonConvert.DeserializeObject(html)?.ToString();
+            return decoded;
         }
     }
 
