@@ -42,7 +42,7 @@ public partial class MainForm : XtraForm
 
     private readonly Options _options;
     private readonly Timer _timer;
-    private Browser _browser;
+    private IBrowser _browser;
     private readonly object _locker = new object();
     public MainForm()
     {
@@ -440,16 +440,17 @@ public partial class MainForm : XtraForm
         {
             var bf = new BrowserFetcher()
             {
-                //WebProxy = new WebProxy("http://127.0.0.1:10809")
+                WebProxy = new WebProxy("http://127.0.0.1:10808")
             };
             bf.DownloadProgressChanged += (s, e) =>
             {
-                UpdateLog($"正在下载 {BrowserFetcher.DefaultRevision},已完成 {e.ProgressPercentage} %");
+                UpdateLog($"正在下载浏览器内核,已完成 {e.ProgressPercentage} %");
             };
-            var revisionInfo = bf.DownloadAsync(BrowserFetcher.DefaultRevision).GetAwaiter().GetResult();
+            
+            var revisionInfo = bf.DownloadAsync().GetAwaiter().GetResult();
             BuildBrowser();
             //var page = _browser.NewPageAsync().GetAwaiter().GetResult();
-            UpdateLog($"环境初始化完成，Downloaded={revisionInfo.Downloaded} ExecutablePath={revisionInfo.ExecutablePath} FolderPath={revisionInfo.FolderPath} {revisionInfo.Local} Platform={revisionInfo.Platform} Revision={revisionInfo.Revision}");
+            UpdateLog($"环境初始化完成,ExecutablePath={revisionInfo.GetExecutablePath()} Platform={revisionInfo.Platform} BuildId={revisionInfo.BuildId}");
         }
         catch (Exception ex)
         {

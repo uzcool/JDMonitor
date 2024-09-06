@@ -6,6 +6,7 @@ using MailKit.Net.Smtp;
 using MimeKit;
 using Newtonsoft.Json;
 using ServiceStack.OrmLite;
+
 #pragma warning disable 618
 
 namespace JDMonitor;
@@ -13,25 +14,32 @@ namespace JDMonitor;
 public class Options
 {
     internal const string DbFile = "data.db";
-    private Options(){}
+
+    private Options()
+    {
+    }
+
     private const string ConfigFileName = "options.json";
-    private static readonly OrmLiteConnectionFactory Factory = new OrmLiteConnectionFactory(DbFile, SqliteDialect.Instance);
-    public MailOptions MailOptions { get; set; }=new MailOptions();
+
+    private static readonly OrmLiteConnectionFactory Factory =
+        new OrmLiteConnectionFactory(DbFile, SqliteDialect.Instance);
+
+    public MailOptions MailOptions { get; set; } = new MailOptions();
 
     /// <summary>
     /// 检测周期，单位 秒 默认4小时
     /// </summary>
     public int Period { get; set; } = (int)TimeSpan.FromHours(4).TotalSeconds;
 
-    [JsonIgnore]
-    public int PeriodMilliseconds => Period * 1000;
+    [JsonIgnore] public int PeriodMilliseconds => Period * 1000;
     public int MaxLogLine { get; set; } = 1024;
     public bool Headless { get; set; } = true;
     public int MaxDegreeOfParallelism { get; set; } = Environment.ProcessorCount;
+
     /// <summary>
     /// 页面加载超时时间，默认=60s
     /// </summary>
-    public int? PageLoadTimeout { get; set; } = 60*1000;
+    public int? PageLoadTimeout { get; set; } = 60 * 1000;
 
     /// <summary>
     /// 是否使用UseCssSelector定位Html节点，如果为false则表示使用XPath
@@ -73,18 +81,19 @@ public class Options
         return new Options();
     }
 
-    public bool SendEmail(string subject,string content,Action<string> logger)
+    public bool SendEmail(string subject, string content, Action<string> logger)
     {
         if (!MailOptions.IsValid())
         {
             logger?.Invoke("邮件配置无效");
             return false;
         }
+
         try
         {
             var message = new MimeMessage();
-            message.From.Add(new MailboxAddress(MailOptions.Sender));
-            message.To.Add(new MailboxAddress(MailOptions.Receiver));
+            message.From.Add(new MailboxAddress("jdmonitor", MailOptions.Sender));
+            message.To.Add(new MailboxAddress("sub", MailOptions.Receiver));
 
             message.Subject = subject;
 
@@ -107,7 +116,7 @@ public class Options
 
     public void Save()
     {
-        File.WriteAllText(ConfigFileName,this.ToJson());
+        File.WriteAllText(ConfigFileName, this.ToJson());
     }
 }
 
