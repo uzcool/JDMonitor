@@ -10,8 +10,9 @@ using System.Windows.Forms;
 using DevExpress.XtraEditors;
 using HtmlAgilityPack;
 using JDMonitor.Entity;
+using Microsoft.Web.WebView2.WinForms;
 using MoreLinq;
-using PuppeteerSharp;
+using Newtonsoft.Json;
 using ScrapySharp.Extensions;
 using ServiceStack.OrmLite;
 using HtmlDocument = HtmlAgilityPack.HtmlDocument;
@@ -42,8 +43,9 @@ public partial class MainForm : XtraForm
 
     private readonly Options _options;
     private readonly Timer _timer;
-    private IBrowser _browser;
+    private WebView2 _browser;
     private readonly object _locker = new object();
+
     public MainForm()
     {
         InitializeComponent();
@@ -64,7 +66,7 @@ public partial class MainForm : XtraForm
             _timer.Change(Timeout.Infinite, Timeout.Infinite);
 
             using var db = _options.GetDbConnection();
-            var records = db.Select<Record>(r => r.IsEnable&&!r.IsDeleted);
+            var records = db.Select<Record>(r => r.IsEnable && !r.IsDeleted);
             if (!records.Any())
             {
                 UpdateLog($"当前没有任何任务，{DateTime.Now}");
@@ -104,10 +106,11 @@ public partial class MainForm : XtraForm
                 UpdateLog($"{record} 不满足同步周期，跳过此次同步，下次同步时间={record.LastSyncAt.AddSeconds(_options.Period)}");
                 return;
             }
+
             UpdateLog($"开始同步 {record}");
             var sw = Stopwatch.StartNew();
             using var tdb = _options.GetDbConnection();
-            var content = await DownloadHtml3(record.Url);
+            var content = await DownloadHtml(record.Url);
             if (string.IsNullOrEmpty(content))
             {
                 sw.Stop();
@@ -127,9 +130,10 @@ public partial class MainForm : XtraForm
                 foreach (var priceXPath in record.PriceXPathArray())
                 {
                     if (string.IsNullOrEmpty(priceXPath)) continue;
-                    priceNode = QueryNode(doc, priceXPath,_options.UseCssSelector);
+                    priceNode = QueryNode(doc, priceXPath, _options.UseCssSelector);
                     if (priceNode != null) break;
                 }
+
                 if (priceNode == null)
                 {
                     UpdateLog($"{record.Title} 价格读取失败");
@@ -139,7 +143,8 @@ public partial class MainForm : XtraForm
                         Message = $"{record} 解析网页数据失败，耗时={sw.Elapsed}"
                     });
                     record.Remark = "价格读取失败";
-                    SendEmail($"[价格读取失败] - {record.Title}", $"链接={record.Url} {Environment.NewLine}当前价格XPath={record.PriceXPath}");
+                    SendEmail($"[价格读取失败] - {record.Title}",
+                        $"链接={record.Url} {Environment.NewLine}当前价格XPath={record.PriceXPath}");
                     RefreshGridData();
                     return;
                 }
@@ -165,21 +170,22 @@ public partial class MainForm : XtraForm
                     Date = DateTime.Now.ToString("yyyy-MM-dd")
                 };
 
-                if (!string.IsNullOrEmpty(record.CouponXPath))//采集优惠券信息
+                if (!string.IsNullOrEmpty(record.CouponXPath)) //采集优惠券信息
                 {
-                    var couponNode = QueryNode(doc, record.CouponXPath, _options.UseCssSelector); 
-                    if (couponNode != null) price.Coupon = couponNode.InnerText?.Trim().Replace(Environment.NewLine,"/");
+                    var couponNode = QueryNode(doc, record.CouponXPath, _options.UseCssSelector);
+                    if (couponNode != null)
+                        price.Coupon = couponNode.InnerText?.Trim().Replace(Environment.NewLine, "/");
                 }
 
-                if (!string.IsNullOrEmpty(record.ImageXPath))//采集预览图
+                if (!string.IsNullOrEmpty(record.ImageXPath)) //采集预览图
                 {
-                    var imgNode = QueryNode(doc, record.ImageXPath, _options.UseCssSelector); 
+                    var imgNode = QueryNode(doc, record.ImageXPath, _options.UseCssSelector);
                     if (imgNode != null)
                     {
                         var src = imgNode.GetAttributeValue("src", "");
                         if (!string.IsNullOrEmpty(src))
                         {
-                            if (src.StartsWith("//"))//如果未明确指明地址协议，则使用商品页相同的协议
+                            if (src.StartsWith("//")) //如果未明确指明地址协议，则使用商品页相同的协议
                             {
                                 var uri = new Uri(record.Url);
                                 src = uri.Scheme + ":" + src;
@@ -201,9 +207,9 @@ public partial class MainForm : XtraForm
                         Max = Sql.Max(x.Value),
                         Avg = Sql.Avg(x.Value)
                     }));
-                if (price.Value < priceStatView.Min)//历史最低
+                if (price.Value < priceStatView.Min) //历史最低
                 {
-                    priceStatView.Min = price.Value;//更新最低价
+                    priceStatView.Min = price.Value; //更新最低价
                     SendEmail("历史最低", record, price, priceStatView);
                 }
 
@@ -217,9 +223,9 @@ public partial class MainForm : XtraForm
                         Max = Sql.Max(x.Value),
                         Avg = Sql.Avg(x.Value)
                     }));
-                if (price.Value < yesterdayStatView.Min)//昨天到现在的价格情况
+                if (price.Value < yesterdayStatView.Min) //昨天到现在的价格情况
                 {
-                    yesterdayStatView.Min = price.Value;//更新最低价
+                    yesterdayStatView.Min = price.Value; //更新最低价
                     SendEmail("昨天距今", record, price, priceStatView);
                 }
 
@@ -242,15 +248,16 @@ public partial class MainForm : XtraForm
             row.LastSyncAt = DateTime.Now;
             row.NewestPrice = price.Value;
             row.NewestCoupon = price.Coupon;
-            UpdateLog($"{record} 已在 { row.LastSyncAt} 完成同步");
+            UpdateLog($"{record} 已在 {row.LastSyncAt} 完成同步");
         }
+
         RefreshGridData();
     }
 
     private HtmlNode QueryNode(HtmlDocument doc, string selector, bool isCssSelector = true)
     {
         if (doc == null) return null;
-          
+
         if (!isCssSelector) return doc.DocumentNode.SelectSingleNode(selector);
         else return doc.DocumentNode.CssSelect(selector).FirstOrDefault();
     }
@@ -264,7 +271,7 @@ public partial class MainForm : XtraForm
 
     private void SendEmail(string subject, string content)
     {
-        var result = _options.SendEmail(subject, content,UpdateLog);
+        var result = _options.SendEmail(subject, content, UpdateLog);
         using var db = _options.GetDbConnection();
         db.Insert<Mail>(new Mail()
         {
@@ -285,7 +292,7 @@ public partial class MainForm : XtraForm
 历史最低={priceStatView.Min}
 历史平均={priceStatView.Avg}
 ";
-        var result = _options.SendEmail(subject, content,UpdateLog);
+        var result = _options.SendEmail(subject, content, UpdateLog);
         if (!result) UpdateLog("发送邮件失败，请检查配置");
         using var db = _options.GetDbConnection();
         db.Insert<Mail>(new Mail()
@@ -297,65 +304,36 @@ public partial class MainForm : XtraForm
         });
     }
 
-    private string DownloadHtml(string url)
+    private async Task<string> DownloadHtml(string url)
     {
-        var wc = new WebClient()
+        if (InvokeRequired)
         {
-            Encoding = Encoding.UTF8
-        };
-        return wc.DownloadString(url);
-    }
-
-    private string DownloadHtml2(string url)
-    {
-        var wb = new WebBrowser();
-        wb.Navigate(url);
-        var mre = new ManualResetEvent(false);
-        wb.DocumentCompleted += (s, e) =>
-        {
-            // ReSharper disable once AccessToDisposedClosure
-            mre.Set();
-        };
-        mre.WaitOne();
-        mre.Dispose();
-        return wb.Document?.Body?.InnerHtml;
-    }
-
-    private async Task<string> DownloadHtml3(string url)
-    {
-        try
-        {
-            if (_browser.IsClosed || !_browser.IsConnected)
-            {
-                var b = _browser;
-                BuildBrowser();
-                await b.DisposeAsync();
-            }
-            //UpdateLog($"开始下载 {url}");
-            //  var userAgent = await browser.GetUserAgentAsync();
-            var page = await _browser.NewPageAsync();
-            var index = Enumerable.Range(0, _userAgents.Count - 1).Shuffle().Shuffle().First();
-            await page.SetUserAgentAsync(_userAgents[index]);
-            page.RequestFailed += (s, e) =>
-            {
-                UpdateLog($"{url} RequestFailed，{e.Request?.Response?.StatusText}");
-            };
-            page.PageError += (s, e) =>
-            {
-                UpdateLog($"{url} PageError，{e.Message}");
-            };
-            var options = new NavigationOptions { Timeout = _options.PageLoadTimeout };
-            await page.GoToAsync(url, options);
-
-            //UpdateLog($"下载完成 {url}");
-            var result = await page.GetContentAsync();
-            await page.DisposeAsync();
-            return result;
+            var r = (Task<string>)Invoke(() => DownloadHtml(url));
+            return await r;
         }
-        catch (Exception ex)
+        else
         {
-            UpdateLog($"{url} 内容下载异常，详情={ex.Message}");
-            return String.Empty;
+            try
+            {
+                if (_browser == null || _browser.CoreWebView2 == null) return string.Empty;
+
+                UpdateLog($"开始下载 {url}");
+                var index = Enumerable.Range(0, _userAgents.Count - 1).Shuffle().Shuffle().First();
+                _browser.CoreWebView2.Settings.UserAgent = _userAgents[index];
+                _browser.CoreWebView2.Navigate(url);
+
+                await Task.Delay(TimeSpan.FromSeconds(15));
+
+                //UpdateLog($"下载完成 {url}");
+                var html = await _browser.CoreWebView2.ExecuteScriptAsync("document.body.outerHTML");
+                var decoded = JsonConvert.DeserializeObject(html)?.ToString();
+                return decoded;
+            }
+            catch (Exception ex)
+            {
+                UpdateLog($"{url} 内容下载异常，详情={ex.Message}");
+                return String.Empty;
+            }
         }
     }
 
@@ -390,20 +368,22 @@ public partial class MainForm : XtraForm
     private void RefreshGrid()
     {
         using var db = _options.GetDbConnection();
-        gridControl.DataSource = db.Select<Record>(db.From<Record>().Where(r => r.IsDeleted == false).OrderBy(r => r.CreateAt));
+        gridControl.DataSource =
+            db.Select<Record>(db.From<Record>().Where(r => r.IsDeleted == false).OrderBy(r => r.CreateAt));
         gridControl.Invalidate();
         gridView.RefreshData();
     }
 
     private void sbtnAdd_Click(object sender, System.EventArgs e)
     {
-        var addForm = new AddForm();
+        var addForm = new AddForm(_browser);
         if (addForm.ShowDialog(this) == DialogResult.OK)
         {
             var record = addForm.GetRecord();
             if (record == null) return;
             using var db = _options.GetDbConnection();
-            if (db.Exists<Record>(r => r.Url.Equals(record.Url, StringComparison.OrdinalIgnoreCase)))
+            if (db.Exists<Record>(r =>
+                    r.IsDeleted == false && r.Url.Equals(record.Url, StringComparison.OrdinalIgnoreCase)))
             {
                 XtraMessageBox.Show(this, $"数据库已存在地址为{record.Url}的记录，请勿重复添加");
                 return;
@@ -413,15 +393,12 @@ public partial class MainForm : XtraForm
                 var id = db.Insert(record, true);
                 record.Id = (int)id;
                 RefreshGrid();
-                SynchronizationContext.Current.Post(async (d) =>
-                {
-                    await Handle(record);
-                }, null);//新增后立即同步一次
+                SynchronizationContext.Current.Post(async (d) => { await Handle(record); }, null); //新增后立即同步一次
             }
         }
     }
 
-    private void MainForm_Load(object sender, EventArgs e)
+    private async void MainForm_Load(object sender, EventArgs e)
     {
         UpdateLog("配置项" + Environment.NewLine + _options.ToJson());
         UpdateLog(Environment.NewLine);
@@ -432,45 +409,24 @@ public partial class MainForm : XtraForm
         _timer.Change(0, Timeout.Infinite);
     }
 
-    private void InitializeEnvironment()
+    private async void InitializeEnvironment()
     {
-        // var executablePath = PuppeteerSharp.Launcher.GetExecutablePath();
         UpdateLog($"正在检测浏览器环境");
         try
         {
-            var bf = new BrowserFetcher()
-            {
-                WebProxy = new WebProxy("http://127.0.0.1:10808")
-            };
-            bf.DownloadProgressChanged += (s, e) =>
-            {
-                UpdateLog($"正在下载浏览器内核,已完成 {e.ProgressPercentage} %");
-            };
-            
-            var revisionInfo = bf.DownloadAsync().GetAwaiter().GetResult();
-            BuildBrowser();
-            //var page = _browser.NewPageAsync().GetAwaiter().GetResult();
-            UpdateLog($"环境初始化完成,ExecutablePath={revisionInfo.GetExecutablePath()} Platform={revisionInfo.Platform} BuildId={revisionInfo.BuildId}");
+            _browser = new WebView2();
+            await _browser.EnsureCoreWebView2Async();
+
+            UpdateLog(
+                $"环境初始化完成,ProductVersion={_browser.ProductVersion}");
         }
         catch (Exception ex)
         {
-            XtraMessageBox.Show(this, $"初始化环境出错，{ex.Message}");
+            XtraMessageBox.Show(this, $"初始化环境出错，{ex.Message},内部错误={ex.InnerException?.Message}");
             Environment.Exit(-1);
         }
     }
 
-    private void BuildBrowser()
-    {
-        lock (_locker)
-        {
-            if (_browser != null && _browser.IsConnected) return;
-            _browser = Puppeteer.LaunchAsync(new LaunchOptions
-            {
-                Headless = _options.Headless,
-                IgnoreHTTPSErrors = true
-            }).GetAwaiter().GetResult();
-        }
-    }
 
     private void InitializeDatabase()
     {
