@@ -322,7 +322,7 @@ public partial class MainForm : XtraForm
                 _browser.CoreWebView2.Settings.UserAgent = _userAgents[index];
                 _browser.CoreWebView2.Navigate(url);
 
-                await Task.Delay(TimeSpan.FromSeconds(15));
+                await Task.Delay(TimeSpan.FromSeconds(5));
 
                 //UpdateLog($"下载完成 {url}");
                 var html = await _browser.CoreWebView2.ExecuteScriptAsync("document.body.outerHTML");
